@@ -93,3 +93,28 @@ def get_recurring_subscriptions(db: Session = Depends(get_db)):
         "status": "success",
         "recurring_subscriptions": recurring_items
     }
+@app.get("/coach/insight/")
+def get_coach_insight(db: Session = Depends(get_db)):
+    # Get total spending per category
+    results = db.query(
+        models.Transaction.category, 
+        func.sum(models.Transaction.amount).label("total")
+    ).group_by(models.Transaction.category).all()
+    
+    if not results:
+        return {"insight": "Welcome! Log a few more transactions so I can analyze your spending habits."}
+    
+    # Find the category where they spent the most money
+    highest_spend = max(results, key=lambda x: x.total)
+    
+    # Generate the coaching tip
+    if highest_spend.category == "Entertainment":
+        tip = f"You've spent ${highest_spend.total:.2f} on Entertainment. Consider reviewing your subscriptions to see if you can cut back."
+    elif highest_spend.category == "Dining":
+        tip = f"Dining out is your biggest expense at ${highest_spend.total:.2f}. Try meal prepping for a few days next week to save money!"
+    elif highest_spend.category == "Transport":
+        tip = f"You've spent ${highest_spend.total:.2f} on Transit. If feasible, look into monthly passes or carpooling to reduce this."
+    else:
+        tip = f"Your highest spending category is {highest_spend.category} (${highest_spend.total:.2f}). Consider setting a strict budget limit here next month to boost your savings."
+        
+    return {"insight": tip}
