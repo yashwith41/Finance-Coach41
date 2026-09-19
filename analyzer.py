@@ -1,10 +1,9 @@
 
+import pandas as pd
+
 def categorize_transaction(description: str) -> str:
-    """
-    Takes a raw transaction description and returns a category.
-    """
-    desc = description.lower()
     
+    desc = description.lower()
     if 'netflix' in desc or 'spotify' in desc or 'hulu' in desc:
         return 'Entertainment'
     elif 'uber' in desc or 'lyft' in desc or 'transit' in desc:
@@ -17,3 +16,19 @@ def categorize_transaction(description: str) -> str:
         return 'Dining'
     else:
         return 'Other'
+
+def detect_recurring_expenses(transactions_data: list[dict]) -> list[dict]:
+    if not transactions_data:
+        return []
+    
+    # Load the raw dictionaries into a Pandas DataFrame
+    df = pd.DataFrame(transactions_data)
+    
+    # Group by description and amount, then count the occurrences
+    subscription_groups = df.groupby(['raw_description', 'amount']).size().reset_index(name='frequency')
+    
+    # Filter for items that appear more than once
+    recurring_df = subscription_groups[subscription_groups['frequency'] > 1]
+    
+    # Convert the resulting DataFrame back into a clean list of dictionaries
+    return recurring_df.to_dict('records')

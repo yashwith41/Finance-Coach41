@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
+from sqlalchemy import func 
 from pydantic import BaseModel
 from datetime import date
 import models
@@ -44,3 +45,40 @@ def create_transaction(transaction: TransactionCreate, db: Session = Depends(get
 @app.get("/transactions/")
 def read_transactions(db: Session = Depends(get_db)):
     return db.query(models.Transaction).all()
+
+@app.get("/summary/")
+def get_financial_summary(db: Session = Depends(get_db)):
+    # This asks the database to group transactions by category and add up the amounts
+    results = db.query(
+        models.Transaction.category, 
+        func.sum(models.Transaction.amount).label("total")
+    ).group_by(models.Transaction.category).all()
+    
+    # Format the results into a clean dictionary for the frontend
+    summary_data = {row.category: row.total for row in results}
+    
+    return {
+        "status": "success",
+        "spending_by_category": summary_data
+    }
+@app.get("/recurring/")
+def get_recurring_subscriptions(db: Session = Depends(get_db)):
+    transactions = db.query(models.Transaction).all()
+    
+    # Convert the SQLAlchemy database objects into standard Python dictionaries
+    tx_list = [
+        {
+            "raw_description": t.raw_description,
+            "amount": t.amount,
+            "date": t.date
+        }
+        for t in transactions
+    ]
+    
+    # Pass the data to your Pandas engine
+    recurring_items = analyzer.detect_recurring_expenses(tx_list)
+    
+    return {
+        "status": "success",
+        "recurring_subscriptions": recurring_items
+    }
