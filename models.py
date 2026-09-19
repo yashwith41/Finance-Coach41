@@ -1,5 +1,7 @@
-from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey, Date
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, Boolean, ForeignKey
+from datetime import datetime
 from database import Base
+
 
 class User(Base):
     __tablename__ = "users"
@@ -23,3 +25,12 @@ class Budget(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     category = Column(String)
     limit_amount = Column(Float)
+
+class Subscription(Base):
+    __tablename__ = "subscriptions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    description = Column(String, index=True)
+    amount = Column(Float)
+    frequency_days = Column(Integer)  # e.g., 30 for monthly, 60 for 2 months
+    next_due_date = Column(DateTime)

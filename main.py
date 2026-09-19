@@ -1,120 +1,118 @@
+import os
+from dotenv import load_dotenv
+import google.generativeai as genai
+from google.genai.errors import ServerError
+
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+model = genai.GenerativeModel("gemini-1.5-flash")
+
+load_dotenv()
+import json
+from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends
-from sqlalchemy.orm import Session
-from sqlalchemy import func 
-from pydantic import BaseModel
-from datetime import date
-import models
-import analyzer
-from database import engine, SessionLocal
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
+from google import genai
+from google.genai import types
+
+from database import engine, get_db
+import models
+
 
 models.Base.metadata.create_all(bind=engine)
 
+app = FastAPI()
 
-
-app = FastAPI(title="AI Finance Coach API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins during local development
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-def get_db():
-    db = SessionLocal()
+
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+
+class ExpenseExtraction(BaseModel):
+    description: str = Field(description="Short description of the expense or subscription")
+    amount: float = Field(description="The monetary amount spent")
+    category: str = Field(description="Category from the user list, or 'Uncategorized'")
+    is_recurring: bool = Field(description="True if user mentions this is recurring or a subscription")
+    frequency_days: int = Field(description="Frequency in days (e.g. 30, 60). 0 if one-time expense.")
+
+
+@app.post("/chat/log")
+def log_expense_via_chat(user_text: str, db: Session = Depends(get_db)):
+    categories = ["Food", "Transport", "Entertainment", "Rent", "Gaming"]
+    
+    prompt = f"""
+    Analyze the user's text and extract the expense details.
+    User text: "{user_text}"
+    Allowed categories: {', '.join(categories)}
+    """
+    
     try:
-        yield db
-    finally:
-        db.close()
-
-class TransactionCreate(BaseModel):
-    amount: float
-    date: date
-    raw_description: str
-
-@app.get("/")
-def read_root():
-    return {"status": "online", "message": "Database is connected!"}
-
-@app.post("/transactions/")
-def create_transaction(transaction: TransactionCreate, db: Session = Depends(get_db)):
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=ExpenseExtraction,
+                temperature=0.1,
+            ),
+        )
+    except ServerError:
+        return {"status": "error", "message": "The AI is currently busy due to high traffic. Please try again in a few seconds."}
+    
+    ai_data = json.loads(response.text)
+    
+   
+    if ai_data.get("is_recurring") and ai_data.get("frequency_days", 0) > 0:
+        next_due = datetime.now() + timedelta(days=ai_data["frequency_days"])
+        new_sub = models.Subscription(
+            description=ai_data["description"],
+            amount=ai_data["amount"],
+            frequency_days=ai_data["frequency_days"],
+            next_due_date=next_due
+        )
+        db.add(new_sub)
+        db.commit()
+        return {"status": "success", "message": f"Added recurring {ai_data['description']} for ₹{ai_data['amount']} every {ai_data['frequency_days']} days."}
+    
   
-    detected_category = analyzer.categorize_transaction(transaction.raw_description)
-
-    new_tx = models.Transaction(
-        amount=transaction.amount, 
-        date=transaction.date, 
-        raw_description=transaction.raw_description,
-        category=detected_category 
-    )
-    db.add(new_tx)
-    db.commit()
-    return {"message": f"Transaction saved as {detected_category}!"}
-
-@app.get("/transactions/")
-def read_transactions(db: Session = Depends(get_db)):
-    return db.query(models.Transaction).all()
-
-@app.get("/summary/")
-def get_financial_summary(db: Session = Depends(get_db)):
-    # This asks the database to group transactions by category and add up the amounts
-    results = db.query(
-        models.Transaction.category, 
-        func.sum(models.Transaction.amount).label("total")
-    ).group_by(models.Transaction.category).all()
-    
-    # Format the results into a clean dictionary for the frontend
-    summary_data = {row.category: row.total for row in results}
-    
-    return {
-        "status": "success",
-        "spending_by_category": summary_data
-    }
-@app.get("/recurring/")
-def get_recurring_subscriptions(db: Session = Depends(get_db)):
-    transactions = db.query(models.Transaction).all()
-    
-    # Convert the SQLAlchemy database objects into standard Python dictionaries
-    tx_list = [
-        {
-            "raw_description": t.raw_description,
-            "amount": t.amount,
-            "date": t.date
-        }
-        for t in transactions
-    ]
-    
-    # Pass the data to your Pandas engine
-    recurring_items = analyzer.detect_recurring_expenses(tx_list)
-    
-    return {
-        "status": "success",
-        "recurring_subscriptions": recurring_items
-    }
-@app.get("/coach/insight/")
-def get_coach_insight(db: Session = Depends(get_db)):
-    # Get total spending per category
-    results = db.query(
-        models.Transaction.category, 
-        func.sum(models.Transaction.amount).label("total")
-    ).group_by(models.Transaction.category).all()
-    
-    if not results:
-        return {"insight": "Welcome! Log a few more transactions so I can analyze your spending habits."}
-    
-    # Find the category where they spent the most money
-    highest_spend = max(results, key=lambda x: x.total)
-    
-    # Generate the coaching tip
-    if highest_spend.category == "Entertainment":
-        tip = f"You've spent ${highest_spend.total:.2f} on Entertainment. Consider reviewing your subscriptions to see if you can cut back."
-    elif highest_spend.category == "Dining":
-        tip = f"Dining out is your biggest expense at ${highest_spend.total:.2f}. Try meal prepping for a few days next week to save money!"
-    elif highest_spend.category == "Transport":
-        tip = f"You've spent ${highest_spend.total:.2f} on Transit. If feasible, look into monthly passes or carpooling to reduce this."
     else:
-        tip = f"Your highest spending category is {highest_spend.category} (${highest_spend.total:.2f}). Consider setting a strict budget limit here next month to boost your savings."
+        new_tx = models.Transaction(
+            raw_description=ai_data["description"], 
+            amount=ai_data["amount"],
+            category=ai_data["category"],
+            date=datetime.now().date() 
+        )
+        db.add(new_tx)
+        db.commit()
+        return {"status": "success", "message": f"Logged ₹{ai_data['amount']} to {ai_data['category']}."}
+    
+    
+
+@app.get("/sync-subscriptions")
+def process_auto_billing(db: Session = Depends(get_db)):
+    today = datetime.now()
+    due_subs = db.query(models.Subscription).filter(models.Subscription.next_due_date <= today).all()
+    
+    processed_count = 0
+    for sub in due_subs:
+        new_tx = models.Transaction(
+            raw_description=f"Auto-bill: {sub.description}", 
+            amount=sub.amount,
+            category="Subscription",
+            date=today.date() 
+        )
+        db.add(new_tx)
+        sub.next_due_date = today + timedelta(days=sub.frequency_days)
+        processed_count += 1
         
-    return {"insight": tip}
+    db.commit()
+    return {"message": f"Processed {processed_count} automated charges."}
