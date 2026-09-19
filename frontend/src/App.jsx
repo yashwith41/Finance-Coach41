@@ -33,26 +33,55 @@ export default function App() {
 
   if (currentView === 'landing') {
     return (
-      <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 font-sans flex flex-col">
-        <nav className="flex items-center justify-between px-10 py-6">
-          <h1 className="text-xl font-semibold tracking-tight text-white">WealthWise</h1>
-          <span className="text-sm font-medium text-zinc-400">WealthWise AI</span>
-          <div className="flex space-x-4">
-            <button onClick={() => setCurrentView('login')} className="text-sm font-medium text-zinc-300 hover:text-white transition">Log in</button>
-            <button onClick={() => setCurrentView('signup')} className="text-sm font-medium bg-white text-[#0a0a0a] px-4 py-2 rounded-full hover:bg-zinc-200 transition">Sign up</button>
+      <div className="min-h-screen bg-[#0d0f12] text-zinc-100 font-sans flex flex-col justify-between selection:bg-blue-500/30">
+        {/* NAVBAR */}
+        <nav className="flex items-center justify-between px-10 py-7 max-w-7xl mx-auto w-full">
+          <h1 className="text-2xl font-serif font-medium tracking-tight text-white">WealthWise</h1>
+          
+          <div className="hidden md:flex items-center space-x-2">
+            <span className="text-sm font-medium text-zinc-400 hover:text-zinc-200 transition cursor-pointer">
+              WealthWise AI
+            </span>
+          </div>
+
+          <div className="flex items-center space-x-6">
+            <button 
+              onClick={() => setCurrentView('login')} 
+              className="text-sm font-medium text-zinc-300 hover:text-white transition"
+            >
+              Log in
+            </button>
+            <button 
+              onClick={() => setCurrentView('signup')} 
+              className="text-sm font-medium bg-[#5063f4] text-white px-5 py-2.5 rounded-full hover:bg-[#4353db] transition shadow-sm"
+            >
+              Sign up
+            </button>
           </div>
         </nav>
-        <main className="flex-1 flex flex-col items-center justify-center text-center px-4 -mt-20">
-          <h2 className="text-4xl md:text-5xl font-light tracking-tight text-white mb-8">
-            Wealth wise ai, your personal finance ai
-          </h2>
-          <button 
-            onClick={() => setCurrentView('login')} 
-            className="px-8 py-3 bg-zinc-100 text-[#0a0a0a] rounded-full font-medium hover:bg-white transition shadow-lg"
-          >
-            Get started
-          </button>
+
+        {/* HERO SECTION */}
+        <main className="flex-1 flex flex-col items-center justify-center text-center px-4 -mt-16">
+          <div className="max-w-3xl space-y-4">
+            <h2 className="text-5xl md:text-6xl font-serif font-normal text-white tracking-tight leading-[1.2]">
+              Introducing <span className="text-[#5d72f5] italic font-normal">WealthWise AI</span>.
+              <br />
+              <span className="text-zinc-100 font-serif">Your personal finance AI assistant.</span>
+            </h2>
+          </div>
+
+          <div className="mt-10">
+            <button 
+              onClick={() => setCurrentView('login')} 
+              className="px-8 py-3.5 bg-[#5063f4] text-white text-sm font-medium rounded-full hover:bg-[#4353db] transition shadow-[0_0_20px_rgba(80,99,244,0.35)]"
+            >
+              Get started
+            </button>
+          </div>
         </main>
+
+        {/* SUBTLE FOOTER SPACER */}
+        <div className="py-6"></div>
       </div>
     );
   }
