@@ -3,13 +3,13 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from datetime import date
 import models
+import analyzer
 from database import engine, SessionLocal
 
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="AI Finance Coach API")
 
-# Opens and closes the database connection securely
 def get_db():
     db = SessionLocal()
     try:
@@ -17,7 +17,6 @@ def get_db():
     finally:
         db.close()
 
-# Validates the incoming data format
 class TransactionCreate(BaseModel):
     amount: float
     date: date
@@ -27,19 +26,21 @@ class TransactionCreate(BaseModel):
 def read_root():
     return {"status": "online", "message": "Database is connected!"}
 
-# POST: Saves a new transaction to the database
 @app.post("/transactions/")
 def create_transaction(transaction: TransactionCreate, db: Session = Depends(get_db)):
+  
+    detected_category = analyzer.categorize_transaction(transaction.raw_description)
+
     new_tx = models.Transaction(
         amount=transaction.amount, 
         date=transaction.date, 
-        raw_description=transaction.raw_description
+        raw_description=transaction.raw_description,
+        category=detected_category 
     )
     db.add(new_tx)
     db.commit()
-    return {"message": "Transaction saved successfully!"}
+    return {"message": f"Transaction saved as {detected_category}!"}
 
-# GET: Retrieves all transactions from the database
 @app.get("/transactions/")
 def read_transactions(db: Session = Depends(get_db)):
     return db.query(models.Transaction).all()
