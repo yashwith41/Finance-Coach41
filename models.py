@@ -42,3 +42,4 @@ class Subscription(Base):
     description = Column(String, index=True)
     amount = Column(Float)
     frequency_days = Column(Integer)
+    next_due_date = Column(Date, nullable=True)

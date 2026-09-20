@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Bell, Send, Eye, EyeOff } from 'lucide-react';
+import { Bell, Send, Eye, EyeOff, ChevronLeft, ChevronRight, ChevronDown, ChevronUp } from 'lucide-react';
 
 export default function App() {
   const [currentView, setCurrentView] = useState('landing');
@@ -23,8 +23,40 @@ export default function App() {
     transactions: []
   });
 
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+
+  // Budgets & 5-Month History State
+  const [monthsData, setMonthsData] = useState([]);
+  const [currentMonthOffset, setCurrentMonthOffset] = useState(0);
+  const [newBudget, setNewBudget] = useState({ category: '', limit: '' });
+  const [expandedCategory, setExpandedCategory] = useState(null);
+
+  const fetchNotifications = async (userId) => {
+    try {
+      const res = await fetch(`http://localhost:8000/user/notifications/${userId}`);
+      const data = await res.json();
+      if (res.ok) setNotifications(data.notifications || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const fetchBudgets = async (userId) => {
+    if (!userId) return;
+    try {
+      const res = await fetch(`http://localhost:8000/user/budgets/${userId}`);
+      const data = await res.json();
+      if (res.ok) setMonthsData(data.months || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const fetchDashboardData = async (userId) => {
     if (!userId) return;
+    fetchNotifications(userId); 
+    fetchBudgets(userId);
     try {
       const res = await fetch(`http://localhost:8000/user/dashboard/${userId}`);
       const data = await res.json();
@@ -43,8 +75,9 @@ export default function App() {
 
   const handleTabChange = (tab) => {
     setActiveTab(tab);
-    if (tab === 'records' && user?.id) {
-      fetchDashboardData(user.id);
+    if (user?.id) {
+      if (tab === 'records') fetchDashboardData(user.id);
+      if (tab === 'categories') fetchBudgets(user.id);
     }
   };
 
@@ -72,6 +105,7 @@ export default function App() {
       setAuthData({ firstName: '', lastName: '', email: '', password: '' });
       setActiveTab('chat');
       setCurrentView('dashboard');
+      fetchDashboardData(data.user.id); 
     } catch (err) {
       setAuthError('Cannot connect to backend server. Make sure FastAPI is running.');
     }
@@ -94,6 +128,28 @@ export default function App() {
       if (res.ok) {
         setUser(data.user);
         setMessages([{ role: 'ai', text: `Perfect. I've set your starting balance to ₹${onboardData.balance}. Your dashboard is now fully unlocked. Would you like to log your first expense, or should we set a savings goal for this month?` }]);
+        fetchDashboardData(user.id);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleBudgetSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('http://localhost:8000/user/budget', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: user.id,
+          category: newBudget.category,
+          limit_amount: parseFloat(newBudget.limit)
+        })
+      });
+      if (res.ok) {
+        setNewBudget({ category: '', limit: '' });
+        fetchBudgets(user.id);
       }
     } catch (err) {
       console.error(err);
@@ -128,6 +184,10 @@ export default function App() {
     } catch (error) {
       setMessages(prev => [...prev, { role: 'ai', text: 'Server error. Make sure FastAPI is running.' }]);
     }
+  };
+
+  const toggleCategoryExpand = (catId) => {
+    setExpandedCategory(expandedCategory === catId ? null : catId);
   };
 
   if (currentView === 'landing') {
@@ -194,6 +254,8 @@ export default function App() {
     );
   }
 
+  const currentMonthData = monthsData.find(m => m.month_offset === currentMonthOffset);
+
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 font-sans selection:bg-blue-500/30">
       <nav className="flex items-center justify-between px-8 py-5 bg-[#0a0a0a] border-b border-zinc-800/60">
@@ -208,10 +270,32 @@ export default function App() {
           ))}
         </div>
         <div className="flex items-center space-x-6">
-          <button className="relative text-zinc-400 hover:text-white transition">
-            <Bell size={20} />
-            <span className="absolute top-0 right-0 w-2 h-2 bg-blue-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.8)]"></span>
-          </button>
+          <div className="relative">
+            <button onClick={() => setShowNotifications(!showNotifications)} className="relative text-zinc-400 hover:text-white transition p-1">
+              <Bell size={20} />
+              {notifications.length > 0 && (
+                <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-blue-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.8)] border-2 border-[#0a0a0a]"></span>
+              )}
+            </button>
+            {showNotifications && (
+              <div className="absolute right-0 mt-3 w-72 bg-zinc-900 border border-zinc-700/60 rounded-xl shadow-2xl py-2 z-50">
+                <div className="px-4 py-2 border-b border-zinc-800/60">
+                  <h4 className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">Upcoming Bills</h4>
+                </div>
+                <div className="max-h-64 overflow-y-auto">
+                  {notifications.length === 0 ? (
+                    <div className="px-4 py-6 text-center text-sm text-zinc-500">No upcoming bills this week.</div>
+                  ) : (
+                    notifications.map((note) => (
+                      <div key={note.id} className="px-4 py-3 hover:bg-zinc-800/50 transition cursor-default border-b border-zinc-800/30 last:border-0">
+                        <p className="text-sm text-zinc-300">{note.message}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
           <button onClick={handleLogout} title="Log out" className="w-8 h-8 bg-zinc-800 rounded-full border border-zinc-700 hover:border-zinc-500 transition flex items-center justify-center text-xs font-medium text-zinc-300">
             {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
           </button>
@@ -319,14 +403,121 @@ export default function App() {
           </div>
         )}
 
+        {/* --- BUDGETS & HISTORY TAB --- */}
         {activeTab === 'categories' && (
-          <div className="animate-in fade-in duration-300">
-            <h2 className="text-xl font-medium text-white mb-6">Expense Categories</h2>
-            <div className="grid grid-cols-4 gap-4">
-              {['Food', 'Transport', 'Entertainment', 'Rent'].map(cat => (
-                <div key={cat} className="p-4 bg-zinc-900/40 border border-zinc-800/60 rounded-xl text-center text-zinc-300 font-medium">{cat}</div>
-              ))}
-              <button className="p-4 bg-[#0a0a0a] border border-dashed border-zinc-700 rounded-xl text-center text-zinc-500 hover:text-zinc-300 hover:border-zinc-500 transition font-medium flex items-center justify-center">+ Add Custom</button>
+          <div className="space-y-6 animate-in fade-in duration-300">
+            <h2 className="text-xl font-medium text-white">Monthly Budgets</h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              
+              {/* Left Column: Form to create limit */}
+              <div className="p-6 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl h-fit md:col-span-1">
+                <h3 className="text-sm font-medium text-white mb-4">Set Category Limit</h3>
+                <form onSubmit={handleBudgetSubmit} className="space-y-4">
+                  <input type="text" required placeholder="Category Name (e.g., Groceries)" value={newBudget.category} onChange={e => setNewBudget({...newBudget, category: e.target.value})} className="w-full bg-[#0a0a0a] border border-zinc-700 text-sm rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500" />
+                  <input type="number" required placeholder="Monthly Limit (₹)" value={newBudget.limit} onChange={e => setNewBudget({...newBudget, limit: e.target.value})} className="w-full bg-[#0a0a0a] border border-zinc-700 text-sm rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500" />
+                  <button type="submit" className="w-full py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition">Save Budget</button>
+                </form>
+              </div>
+
+              {/* Right Column: Month Slider & Categories */}
+              <div className="space-y-4 md:col-span-2">
+                
+                {/* 5-Month UI Slider */}
+                {monthsData.length > 0 && (
+                  <div className="flex items-center justify-between bg-zinc-900/60 p-4 rounded-xl border border-zinc-800/60">
+                    <button 
+                      onClick={() => {
+                        setCurrentMonthOffset(prev => Math.min(prev + 1, 4));
+                        setExpandedCategory(null);
+                      }} 
+                      disabled={currentMonthOffset === 4}
+                      className="p-1 rounded-full hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-not-allowed transition"
+                    >
+                      <ChevronLeft size={20} className="text-zinc-300" />
+                    </button>
+                    
+                    <span className="font-semibold text-zinc-100 tracking-wide">
+                      {currentMonthData?.month_label}
+                    </span>
+                    
+                    <button 
+                      onClick={() => {
+                        setCurrentMonthOffset(prev => Math.max(prev - 1, 0));
+                        setExpandedCategory(null);
+                      }} 
+                      disabled={currentMonthOffset === 0}
+                      className="p-1 rounded-full hover:bg-zinc-800 disabled:opacity-30 disabled:cursor-not-allowed transition"
+                    >
+                      <ChevronRight size={20} className="text-zinc-300" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Categories List for Selected Month */}
+                {(!currentMonthData || currentMonthData.categories.length === 0) ? (
+                    <div className="p-6 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl text-center text-zinc-500 text-sm">
+                      No categories set. Add limits or chat with WealthWise to auto-generate them.
+                    </div>
+                ) : (
+                    currentMonthData.categories.map(b => {
+                        const isLimitZero = b.limit_amount === 0;
+                        const percent = isLimitZero ? (b.spent > 0 ? 100 : 0) : Math.min((b.spent / b.limit_amount) * 100, 100);
+                        const isOver = isLimitZero ? false : percent >= 90;
+                        const isExpanded = expandedCategory === b.id;
+
+                        return (
+                          <div key={b.id} className="bg-zinc-900/40 border border-zinc-800/60 rounded-2xl overflow-hidden transition-all duration-200">
+                            
+                            {/* Category Header (Clickable for Dropdown) */}
+                            <div 
+                              onClick={() => toggleCategoryExpand(b.id)}
+                              className="p-5 cursor-pointer hover:bg-zinc-800/30 transition flex flex-col space-y-3"
+                            >
+                              <div className="flex justify-between items-center text-sm">
+                                <div className="flex items-center space-x-2">
+                                  <span className="font-medium text-zinc-200 text-base">{b.category}</span>
+                                  {isLimitZero && <span className="text-[10px] bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full uppercase tracking-widest">Auto</span>}
+                                </div>
+                                <div className="flex items-center space-x-4">
+                                  <span className="text-zinc-400">
+                                    ₹{b.spent.toLocaleString()} {isLimitZero ? "" : `/ ₹${b.limit_amount.toLocaleString()}`}
+                                  </span>
+                                  {isExpanded ? <ChevronUp size={16} className="text-zinc-500" /> : <ChevronDown size={16} className="text-zinc-500" />}
+                                </div>
+                              </div>
+                              
+                              {!isLimitZero && (
+                                <div className="w-full bg-[#0a0a0a] rounded-full h-1.5 border border-zinc-800">
+                                  <div className={`h-1.5 rounded-full ${isOver ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Dropdown: Transaction Items */}
+                            {isExpanded && (
+                              <div className="px-5 pb-5 pt-2 bg-zinc-900/20 border-t border-zinc-800/40">
+                                {b.transactions.length === 0 ? (
+                                  <p className="text-xs text-zinc-500 italic py-2">No transactions recorded for {b.category} this month.</p>
+                                ) : (
+                                  <div className="space-y-2">
+                                    {b.transactions.map(item => (
+                                      <div key={item.id} className="flex justify-between text-xs py-1.5 text-zinc-300 border-b border-zinc-800/50 last:border-0">
+                                        <span><span className="text-zinc-500 mr-2">{item.date}</span> {item.description}</span>
+                                        <span className="font-medium text-zinc-200">₹{item.amount.toLocaleString()}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                          </div>
+                        )
+                    })
+                )}
+              </div>
+
             </div>
           </div>
         )}
