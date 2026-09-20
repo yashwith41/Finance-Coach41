@@ -75,6 +75,12 @@ class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
+class OnboardRequest(BaseModel):
+    user_id: int
+    current_balance: float
+    monthly_income: float
+    payday_date: int
+
 class ExpenseExtraction(BaseModel):
     description: str = Field(description="Short description of the expense or subscription")
     amount: float = Field(description="The monetary amount spent")
@@ -111,7 +117,10 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         "user": {
             "id": new_user.id,
             "email": new_user.email,
-            "name": display_name
+            "name": display_name,
+            "is_onboarded": new_user.is_onboarded,
+            "current_balance": new_user.current_balance,
+            "monthly_income": new_user.monthly_income
         }
     }
 
@@ -131,12 +140,41 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         "status": "success",
         "token": token,
         "user": {
-            "id": user.id,
+            "id": user.id,  # For signup, use new_user.id
             "email": user.email,
-            "name": display_name
+            "name": display_name,
+            "is_onboarded": user.is_onboarded,
+            "current_balance": user.current_balance,
+            "monthly_income": user.monthly_income
         }
     }
 
+@app.post("/user/onboard")
+def complete_onboarding(payload: OnboardRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == payload.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    user.current_balance = payload.current_balance
+    user.monthly_income = payload.monthly_income
+    user.payday_date = payload.payday_date
+    user.is_onboarded = True
+    db.commit()
+    db.refresh(user)
+
+    display_name = f"{user.first_name or ''} {user.last_name or ''}".strip() or user.email
+
+    return {
+        "status": "success",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "name": display_name,
+            "is_onboarded": user.is_onboarded,
+            "current_balance": user.current_balance,
+            "monthly_income": user.monthly_income
+        }
+    }
 
 @app.post("/chat/log")
 def log_expense_via_chat(user_text: str, db: Session = Depends(get_db)):

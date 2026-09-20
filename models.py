@@ -11,6 +11,12 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    current_balance = Column(Float, default=0.0)
+    monthly_income = Column(Float, default=0.0)
+    payday_date = Column(Integer, nullable=True)
+    is_onboarded = Column(Boolean, default=False)
+
+
 
 class Transaction(Base):
     __tablename__ = "transactions"
@@ -37,3 +43,4 @@ class Subscription(Base):
     amount = Column(Float)
     frequency_days = Column(Integer)  # e.g., 30 for monthly, 60 for 2 months
     next_due_date = Column(DateTime)
+
