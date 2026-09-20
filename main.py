@@ -6,6 +6,7 @@ from typing import Optional, List
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from pydantic import BaseModel, EmailStr, Field
 import bcrypt
 import jwt
@@ -20,11 +21,9 @@ from database import engine, SessionLocal, Base
 
 load_dotenv()
 
-
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="WealthWise API")
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -41,10 +40,7 @@ def get_db():
     finally:
         db.close()
 
-# Gemini API Client
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
-
-
 
 SECRET_KEY = os.getenv("JWT_SECRET", "wealthwise_super_secret_jwt_key_development_only")
 ALGORITHM = "HS256"
@@ -64,7 +60,6 @@ def create_access_token(data: dict) -> str:
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-
 class SignupRequest(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
@@ -81,13 +76,16 @@ class OnboardRequest(BaseModel):
     monthly_income: float
     payday_date: int
 
+class ChatRequest(BaseModel):
+    user_id: int
+    user_text: str
+
 class ExpenseExtraction(BaseModel):
     description: str = Field(description="Short description of the expense or subscription")
     amount: float = Field(description="The monetary amount spent")
     category: str = Field(description="Category from the user list, or 'Uncategorized'")
     is_recurring: bool = Field(description="True if user mentions this is recurring or a subscription")
     frequency_days: int = Field(description="Frequency in days (e.g. 30, 60). 0 if one-time expense.")
-
 
 @app.post("/auth/signup")
 def signup(payload: SignupRequest, db: Session = Depends(get_db)):
@@ -140,7 +138,7 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
         "status": "success",
         "token": token,
         "user": {
-            "id": user.id,  # For signup, use new_user.id
+            "id": user.id,
             "email": user.email,
             "name": display_name,
             "is_onboarded": user.is_onboarded,
@@ -177,12 +175,12 @@ def complete_onboarding(payload: OnboardRequest, db: Session = Depends(get_db)):
     }
 
 @app.post("/chat/log")
-def log_expense_via_chat(user_text: str, db: Session = Depends(get_db)):
+def log_expense_via_chat(payload: ChatRequest, db: Session = Depends(get_db)):
     categories = ["Food", "Transport", "Entertainment", "Rent", "Gaming"]
 
     prompt = f"""
 Analyze the user's text and extract the expense details.
-User text: "{user_text}"
+User text: "{payload.user_text}"
 Allowed categories: {', '.join(categories)}
 """
 
@@ -205,11 +203,10 @@ Allowed categories: {', '.join(categories)}
         return {"status": "error", "message": f"Failed to process expense: {str(e)}"}
 
     ai_data = json.loads(response.text)
-
     
     if ai_data.get("is_recurring") and ai_data.get("frequency_days", 0) > 0:
-        next_due = datetime.now() + timedelta(days=ai_data["frequency_days"])
         new_sub = models.Subscription(
+            user_id=payload.user_id,
             description=ai_data["description"],
             amount=ai_data["amount"],
             frequency_days=ai_data["frequency_days"],
@@ -221,8 +218,8 @@ Allowed categories: {', '.join(categories)}
             "message": f"Added recurring {ai_data['description']} for ₹{ai_data['amount']} every {ai_data['frequency_days']} days."
         }
 
-    
     new_tx = models.Transaction(
+        user_id=payload.user_id,
         raw_description=ai_data["description"],
         amount=ai_data["amount"],
         category=ai_data["category"],
@@ -236,12 +233,50 @@ Allowed categories: {', '.join(categories)}
         "message": f"Logged ₹{ai_data['amount']} to {ai_data['category']}."
     }
 
+@app.get("/user/dashboard/{user_id}")
+def get_user_dashboard(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    transactions = (
+        db.query(models.Transaction)
+        .filter(models.Transaction.user_id == user_id)
+        .order_by(models.Transaction.date.desc())
+        .limit(50)
+        .all()
+    )
+
+    total_spent = (
+        db.query(func.sum(models.Transaction.amount))
+        .filter(models.Transaction.user_id == user_id)
+        .scalar()
+    ) or 0.0
+
+    current_balance = user.current_balance - total_spent
+
+    return {
+        "status": "success",
+        "metrics": {
+            "total_balance": current_balance,
+            "monthly_income": user.monthly_income,
+            "total_spent": total_spent
+        },
+        "transactions": [
+            {
+                "id": t.id,
+                "date": t.date.strftime("%b %d") if t.date else "Recent",
+                "description": t.raw_description,
+                "category": t.category,
+                "amount": t.amount
+            }
+            for t in transactions
+        ]
+    }
 
 @app.get("/sync-subscriptions")
 def process_auto_billing(db: Session = Depends(get_db)):
     today = datetime.now()
     due_subs = db.query(models.Subscription).all()
-
     processed_count = 0
-    
     return {"status": "success", "processed": processed_count}

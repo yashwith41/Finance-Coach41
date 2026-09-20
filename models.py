@@ -37,10 +37,8 @@ class Budget(Base):
 
 class Subscription(Base):
     __tablename__ = "subscriptions"
-    
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
     description = Column(String, index=True)
     amount = Column(Float)
-    frequency_days = Column(Integer)  # e.g., 30 for monthly, 60 for 2 months
-    next_due_date = Column(DateTime)
-
+    frequency_days = Column(Integer)

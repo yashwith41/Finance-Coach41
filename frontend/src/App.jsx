@@ -10,13 +10,43 @@ export default function App() {
   ]);
   const [showPassword, setShowPassword] = useState(false);
 
-  // Auth State
   const [authData, setAuthData] = useState({ firstName: '', lastName: '', email: '', password: '' });
   const [authError, setAuthError] = useState('');
   const [user, setUser] = useState(null);
 
-  // Onboarding State
   const [onboardData, setOnboardData] = useState({ balance: '', income: '', payday: '' });
+  
+  const [dashboardData, setDashboardData] = useState({
+    total_balance: 0,
+    monthly_income: 0,
+    total_spent: 0,
+    transactions: []
+  });
+
+  const fetchDashboardData = async (userId) => {
+    if (!userId) return;
+    try {
+      const res = await fetch(`http://localhost:8000/user/dashboard/${userId}`);
+      const data = await res.json();
+      if (res.ok) {
+        setDashboardData({
+          total_balance: data.metrics.total_balance,
+          monthly_income: data.metrics.monthly_income,
+          total_spent: data.metrics.total_spent,
+          transactions: data.transactions
+        });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleTabChange = (tab) => {
+    setActiveTab(tab);
+    if (tab === 'records' && user?.id) {
+      fetchDashboardData(user.id);
+    }
+  };
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
@@ -83,9 +113,18 @@ export default function App() {
     setChatInput('');
 
     try {
-      const response = await fetch(`http://localhost:8000/chat/log?user_text=${encodeURIComponent(userText)}`, { method: 'POST' });
+      const response = await fetch('http://localhost:8000/chat/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: user.id,
+          user_text: userText
+        })
+      });
       const data = await response.json();
       setMessages(prev => [...prev, { role: 'ai', text: data.message }]);
+      
+      fetchDashboardData(user.id);
     } catch (error) {
       setMessages(prev => [...prev, { role: 'ai', text: 'Server error. Make sure FastAPI is running.' }]);
     }
@@ -163,7 +202,7 @@ export default function App() {
         </div>
         <div className="flex space-x-1 bg-zinc-900/50 p-1 rounded-full border border-zinc-800/60">
           {['chat', 'records', 'categories'].map((tab) => (
-            <button key={tab} onClick={() => setActiveTab(tab)} className={`px-6 py-1.5 rounded-full text-sm font-medium transition ${activeTab === tab ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}>
+            <button key={tab} onClick={() => handleTabChange(tab)} className={`px-6 py-1.5 rounded-full text-sm font-medium transition ${activeTab === tab ? 'bg-zinc-800 text-white shadow-sm' : 'text-zinc-500 hover:text-zinc-300'}`}>
               {tab === 'chat' ? 'WealthWise AI' : tab.charAt(0).toUpperCase() + tab.slice(1)}
             </button>
           ))}
@@ -185,17 +224,18 @@ export default function App() {
             <div className="grid grid-cols-3 gap-6">
               <div className="p-6 rounded-2xl bg-zinc-900/40 border border-zinc-800/60">
                 <h2 className="text-xs font-medium text-zinc-500 mb-2 uppercase tracking-wider">Total Balance</h2>
-                <p className="text-4xl font-light text-white tracking-tight">₹ {user?.current_balance || 0}</p>
+                <p className="text-4xl font-light text-white tracking-tight">₹ {dashboardData.total_balance.toLocaleString()}</p>
               </div>
               <div className="p-6 rounded-2xl bg-zinc-900/40 border border-zinc-800/60">
                 <h2 className="text-xs font-medium text-zinc-500 mb-2 uppercase tracking-wider">Income</h2>
-                <p className="text-4xl font-light text-emerald-400 tracking-tight">₹ {user?.monthly_income || 0}</p>
+                <p className="text-4xl font-light text-emerald-400 tracking-tight">₹ {dashboardData.monthly_income.toLocaleString()}</p>
               </div>
               <div className="p-6 rounded-2xl bg-zinc-900/40 border border-zinc-800/60">
                 <h2 className="text-xs font-medium text-zinc-500 mb-2 uppercase tracking-wider">Spent</h2>
-                <p className="text-4xl font-light text-rose-400 tracking-tight">₹ 0</p>
+                <p className="text-4xl font-light text-rose-400 tracking-tight">₹ {dashboardData.total_spent.toLocaleString()}</p>
               </div>
             </div>
+
             <div className="p-8 rounded-2xl bg-zinc-900/40 border border-zinc-800/60">
               <h3 className="text-xs font-medium text-zinc-400 mb-6 uppercase tracking-wider">Current Month Spending</h3>
               <div className="grid grid-cols-5 text-xs font-semibold text-zinc-500 uppercase pb-4 border-b border-zinc-800">
@@ -204,9 +244,23 @@ export default function App() {
                 <span>Category</span>
                 <span className="text-right">Amount</span>
               </div>
-              <div className="py-12 text-center">
-                <p className="text-sm text-zinc-500">No transactions recorded yet.</p>
-              </div>
+              
+              {dashboardData.transactions.length === 0 ? (
+                <div className="py-12 text-center">
+                  <p className="text-sm text-zinc-500">No transactions recorded yet.</p>
+                </div>
+              ) : (
+                <div className="mt-4 space-y-1">
+                  {dashboardData.transactions.map((t) => (
+                    <div key={t.id} className="grid grid-cols-5 items-center text-sm text-zinc-300 py-3 border-b border-zinc-800/40">
+                      <span className="text-zinc-500">{t.date}</span>
+                      <span className="col-span-2 font-medium text-zinc-200">{t.description}</span>
+                      <span className="text-zinc-500">{t.category}</span>
+                      <span className="text-right font-medium">₹ {t.amount.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -218,7 +272,6 @@ export default function App() {
             </div>
             
             <div className="flex-1 overflow-y-auto p-6 space-y-4 flex flex-col">
-              {/* NEW ONBOARDING FLOW */}
               {!user?.is_onboarded ? (
                 <>
                   <div className="px-4 py-3 rounded-2xl text-sm max-w-[85%] bg-zinc-800/60 border border-zinc-700/50 text-zinc-200 self-start rounded-tl-sm">
@@ -245,7 +298,6 @@ export default function App() {
                   </div>
                 </>
               ) : (
-                /* REGULAR CHAT MESSAGES */
                 messages.map((msg, index) => (
                   <div key={index} className={`px-4 py-3 rounded-2xl text-sm max-w-[85%] ${msg.role === 'user' ? 'bg-blue-600/20 border border-blue-500/30 text-blue-100 self-end rounded-tr-sm' : 'bg-zinc-800/60 border border-zinc-700/50 text-zinc-200 self-start rounded-tl-sm'}`}>
                     {msg.text}
