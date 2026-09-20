@@ -2,17 +2,68 @@ import React, { useState } from 'react';
 import { Bell, Send, Eye, EyeOff } from 'lucide-react';
 
 export default function App() {
-  // Navigation State: 'landing', 'login', 'signup', 'dashboard'
   const [currentView, setCurrentView] = useState('landing');
-  // Dashboard Tab State: 'records', 'categories', 'chat'
-  const [activeTab, setActiveTab] = useState('records');
-
-  // Chat State
+  const [activeTab, setActiveTab] = useState('chat');
   const [chatInput, setChatInput] = useState('');
   const [messages, setMessages] = useState([
     { role: 'ai', text: 'How can I help you today?' }
   ]);
   const [showPassword, setShowPassword] = useState(false);
+
+  const [authData, setAuthData] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    password: ''
+  });
+  const [authError, setAuthError] = useState('');
+  const [user, setUser] = useState(null);
+
+  const handleAuthSubmit = async (e) => {
+    e.preventDefault();
+    setAuthError('');
+
+    const endpoint = currentView === 'signup' ? '/auth/signup' : '/auth/login';
+    const body = currentView === 'signup'
+      ? {
+          first_name: authData.firstName,
+          last_name: authData.lastName,
+          email: authData.email,
+          password: authData.password
+        }
+      : {
+          email: authData.email,
+          password: authData.password
+        };
+
+    try {
+      const res = await fetch(`http://localhost:8000${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        setAuthError(data.detail || 'Authentication failed.');
+        return;
+      }
+
+      localStorage.setItem('wealthwise_token', data.token);
+      setUser(data.user);
+      setAuthData({ firstName: '', lastName: '', email: '', password: '' });
+      setActiveTab('chat');
+      setCurrentView('dashboard');
+    } catch (err) {
+      setAuthError('Cannot connect to backend server. Make sure FastAPI is running.');
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('wealthwise_token');
+    setUser(null);
+    setCurrentView('landing');
+  };
 
   const handleSend = async () => {
     if (!chatInput.trim()) return;
@@ -29,13 +80,10 @@ export default function App() {
     }
   };
 
-  // --- VIEWS ---
-
   if (currentView === 'landing') {
     return (
       <div className="min-h-screen bg-[#0d0f12] text-zinc-100 font-sans flex flex-col justify-between selection:bg-blue-500/30">
-        {/* NAVBAR */}
-        <nav className="flex items-center justify-between px-10 py-7 max-w-7xl mx-auto w-full">
+        <nav className="relative z-20 flex items-center justify-between px-10 py-7 max-w-7xl mx-auto w-full">
           <h1 className="text-2xl font-serif font-medium tracking-tight text-white">WealthWise</h1>
           
           <div className="hidden md:flex items-center space-x-2">
@@ -46,13 +94,13 @@ export default function App() {
 
           <div className="flex items-center space-x-6">
             <button 
-              onClick={() => setCurrentView('login')} 
+              onClick={() => { setAuthError(''); setCurrentView('login'); }} 
               className="text-sm font-medium text-zinc-300 hover:text-white transition"
             >
               Log in
             </button>
             <button 
-              onClick={() => setCurrentView('signup')} 
+              onClick={() => { setAuthError(''); setCurrentView('signup'); }} 
               className="text-sm font-medium bg-[#5063f4] text-white px-5 py-2.5 rounded-full hover:bg-[#4353db] transition shadow-sm"
             >
               Sign up
@@ -60,7 +108,6 @@ export default function App() {
           </div>
         </nav>
 
-        {/* HERO SECTION */}
         <main className="flex-1 flex flex-col items-center justify-center text-center px-4 -mt-16">
           <div className="max-w-3xl space-y-4">
             <h2 className="text-5xl md:text-6xl font-serif font-normal text-white tracking-tight leading-[1.2]">
@@ -72,7 +119,7 @@ export default function App() {
 
           <div className="mt-10">
             <button 
-              onClick={() => setCurrentView('login')} 
+              onClick={() => { setAuthError(''); setCurrentView('login'); }} 
               className="px-8 py-3.5 bg-[#5063f4] text-white text-sm font-medium rounded-full hover:bg-[#4353db] transition shadow-[0_0_20px_rgba(80,99,244,0.35)]"
             >
               Get started
@@ -80,7 +127,6 @@ export default function App() {
           </div>
         </main>
 
-        {/* SUBTLE FOOTER SPACER */}
         <div className="py-6"></div>
       </div>
     );
@@ -99,35 +145,81 @@ export default function App() {
             </p>
           </div>
           
-          <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); setCurrentView('dashboard'); }}>
-            {currentView === 'signup' && (
-              <div className="grid grid-cols-2 gap-4">
-                <input type="text" placeholder="First Name" className="w-full bg-[#0a0a0a] border border-zinc-800 text-sm rounded-xl px-4 py-3 outline-none focus:border-zinc-500 transition" />
-                <input type="text" placeholder="Last Name" className="w-full bg-[#0a0a0a] border border-zinc-800 text-sm rounded-xl px-4 py-3 outline-none focus:border-zinc-500 transition" />
+          <form className="space-y-4" onSubmit={handleAuthSubmit}>
+            {authError && (
+              <div className="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-400 text-xs">
+                {authError}
               </div>
             )}
-            <input type="email" placeholder="Email Address" className="w-full bg-[#0a0a0a] border border-zinc-800 text-sm rounded-xl px-4 py-3 outline-none focus:border-zinc-500 transition" required />
+
+            {currentView === 'signup' && (
+              <div className="grid grid-cols-2 gap-4">
+                <input 
+                  type="text" 
+                  placeholder="First Name" 
+                  value={authData.firstName}
+                  onChange={(e) => setAuthData({ ...authData, firstName: e.target.value })}
+                  className="w-full bg-[#0a0a0a] border border-zinc-800 text-sm rounded-xl px-4 py-3 outline-none focus:border-zinc-500 transition text-white" 
+                />
+                <input 
+                  type="text" 
+                  placeholder="Last Name" 
+                  value={authData.lastName}
+                  onChange={(e) => setAuthData({ ...authData, lastName: e.target.value })}
+                  className="w-full bg-[#0a0a0a] border border-zinc-800 text-sm rounded-xl px-4 py-3 outline-none focus:border-zinc-500 transition text-white" 
+                />
+              </div>
+            )}
+
+            <input 
+              type="email" 
+              placeholder="Email Address" 
+              value={authData.email}
+              onChange={(e) => setAuthData({ ...authData, email: e.target.value })}
+              className="w-full bg-[#0a0a0a] border border-zinc-800 text-sm rounded-xl px-4 py-3 outline-none focus:border-zinc-500 transition text-white" 
+              required 
+            />
+
             <div className="relative">
-              <input type={showPassword ? "text" : "password"} placeholder="Password" className="w-full bg-[#0a0a0a] border border-zinc-800 text-sm rounded-xl pl-4 pr-10 py-3 outline-none focus:border-zinc-500 transition" required />
-              <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-3.5 text-zinc-500 hover:text-zinc-300">
+              <input 
+                type={showPassword ? "text" : "password"} 
+                placeholder="Password" 
+                value={authData.password}
+                onChange={(e) => setAuthData({ ...authData, password: e.target.value })}
+                className="w-full bg-[#0a0a0a] border border-zinc-800 text-sm rounded-xl pl-4 pr-10 py-3 outline-none focus:border-zinc-500 transition text-white" 
+                required 
+              />
+              <button 
+                type="button" 
+                onClick={() => setShowPassword(!showPassword)} 
+                className="absolute right-3 top-3.5 text-zinc-500 hover:text-zinc-300"
+              >
                 {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
             
             {currentView === 'login' && (
               <div className="flex justify-end">
-                <button type="button" className="text-xs text-zinc-400 hover:text-white transition">Forgot password?</button>
+                <button type="button" className="text-xs text-zinc-400 hover:text-white transition">
+                  Forgot password?
+                </button>
               </div>
             )}
             
-            <button type="submit" className="w-full py-3 bg-white text-[#0a0a0a] rounded-xl font-medium hover:bg-zinc-200 transition mt-4">
+            <button 
+              type="submit" 
+              className="w-full py-3 bg-white text-[#0a0a0a] rounded-xl font-medium hover:bg-zinc-200 transition mt-4"
+            >
               {currentView === 'login' ? 'Submit' : 'Agree and continue'}
             </button>
           </form>
 
           <div className="mt-6 text-center">
             <button 
-              onClick={() => setCurrentView(currentView === 'login' ? 'signup' : 'login')} 
+              onClick={() => {
+                setAuthError('');
+                setCurrentView(currentView === 'login' ? 'signup' : 'login');
+              }} 
               className="text-sm text-zinc-400 hover:text-white transition"
             >
               {currentView === 'login' ? 'New to WealthWise? Sign up' : 'Already have an account? Log in'}
@@ -138,18 +230,15 @@ export default function App() {
     );
   }
 
-  // === MAIN DASHBOARD VIEW ===
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-zinc-100 font-sans selection:bg-blue-500/30">
-      {/* DASHBOARD NAVBAR */}
       <nav className="flex items-center justify-between px-8 py-5 bg-[#0a0a0a] border-b border-zinc-800/60">
         <div className="flex items-baseline space-x-2">
           <h1 className="text-xl font-semibold tracking-tight text-white">WealthWise</h1>
         </div>
         
-        {/* CENTER TABS */}
         <div className="flex space-x-1 bg-zinc-900/50 p-1 rounded-full border border-zinc-800/60">
-          {['records', 'categories', 'chat'].map((tab) => (
+          {['chat', 'records', 'categories'].map((tab) => (
             <button 
               key={tab}
               onClick={() => setActiveTab(tab)}
@@ -160,24 +249,24 @@ export default function App() {
           ))}
         </div>
 
-        {/* GLOWING NOTIFICATION & PROFILE */}
         <div className="flex items-center space-x-6">
           <button className="relative text-zinc-400 hover:text-white transition">
             <Bell size={20} />
-            {/* The Glowing Reminder Dot */}
             <span className="absolute top-0 right-0 w-2 h-2 bg-blue-500 rounded-full animate-pulse shadow-[0_0_8px_rgba(59,130,246,0.8)]"></span>
           </button>
-          <button onClick={() => setCurrentView('landing')} className="w-8 h-8 bg-zinc-800 rounded-full border border-zinc-700 hover:border-zinc-500 transition"></button>
+          <button 
+            onClick={handleLogout} 
+            title="Log out" 
+            className="w-8 h-8 bg-zinc-800 rounded-full border border-zinc-700 hover:border-zinc-500 transition flex items-center justify-center text-xs font-medium text-zinc-300"
+          >
+            {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+          </button>
         </div>
       </nav>
 
-      {/* DASHBOARD CONTENT AREA */}
       <main className="max-w-7xl mx-auto p-8 h-[calc(100vh-80px)]">
-        
-        {/* RECORDS TAB */}
         {activeTab === 'records' && (
           <div className="space-y-8 animate-in fade-in duration-300">
-            {/* Top Metrics Banner */}
             <div className="grid grid-cols-3 gap-6">
               <div className="p-6 rounded-2xl bg-zinc-900/40 border border-zinc-800/60">
                 <h2 className="text-xs font-medium text-zinc-500 mb-2 uppercase tracking-wider">Total Balance</h2>
@@ -193,7 +282,6 @@ export default function App() {
               </div>
             </div>
 
-            {/* Full-Width History Table */}
             <div className="p-8 rounded-2xl bg-zinc-900/40 border border-zinc-800/60">
               <h3 className="text-xs font-medium text-zinc-400 mb-6 uppercase tracking-wider">Current Month Spending</h3>
               <div className="grid grid-cols-5 text-xs font-semibold text-zinc-500 uppercase pb-4 border-b border-zinc-800">
@@ -220,7 +308,6 @@ export default function App() {
           </div>
         )}
 
-        {/* AI CHAT TAB */}
         {activeTab === 'chat' && (
           <div className="max-w-3xl mx-auto h-full flex flex-col rounded-2xl bg-zinc-900/20 border border-zinc-800/60 animate-in fade-in duration-300">
             <div className="px-6 py-5 border-b border-zinc-800/60 bg-zinc-900/40 rounded-t-2xl">
@@ -252,7 +339,6 @@ export default function App() {
           </div>
         )}
 
-        {/* CATEGORIES TAB (Placeholder for now) */}
         {activeTab === 'categories' && (
           <div className="animate-in fade-in duration-300">
             <h2 className="text-xl font-medium text-white mb-6">Expense Categories</h2>
