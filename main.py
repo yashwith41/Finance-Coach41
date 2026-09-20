@@ -180,18 +180,25 @@ def complete_onboarding(payload: OnboardRequest, db: Session = Depends(get_db)):
     }
 
 @app.post("/chat/log")
-def log_expense_via_chat(payload: ChatRequest, db: Session = Depends(get_db)):
-    user_budgets = db.query(models.Budget.category).filter(models.Budget.user_id == payload.user_id).all()
-    user_categories = [b[0] for b in user_budgets]
+def chat_log(payload: ChatRequest, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == payload.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    categories = db.query(models.Transaction.category).filter(
+        models.Transaction.user_id == payload.user_id
+    ).distinct().all()
+    user_categories = [c[0] for c in categories]
 
     prompt = f"""
-    Analyze the user's text and extract the expense details.
+    Analyze the user's text and determine their intent.
     User text: "{payload.user_text}"
-    
-    Categorization Rules:
-    1. Check if the expense logically fits into one of the user's existing categories: {', '.join(user_categories) if user_categories else 'None'}.
-    2. If it does not fit, invent a short, highly appropriate standard category name (e.g., 'Health', 'Utilities', 'Shopping').
-    3. If the user's text is gibberish, nonsense, or cannot be categorized, strictly use the category name "Uncategorized".
+    Existing Categories: {', '.join(user_categories) if user_categories else 'None'}
+
+    Return a JSON response with:
+    1. "action": either "log_expense" or "set_budget"
+    2. If "log_expense": extract "amount" (float), "description" (string), and "category" (string).
+    3. If "set_budget": extract "budget_amount" (float).
     """
 
     try:
@@ -199,66 +206,77 @@ def log_expense_via_chat(payload: ChatRequest, db: Session = Depends(get_db)):
             model="gemini-3.6-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=ExpenseExtraction,
-                temperature=0.1,
-            ),
+                response_mime_type="application/json"
+            )
         )
-    except ServerError:
-        return {"status": "error", "message": "The AI is currently busy. Please try again in a few seconds."}
+        
+        # Clean markdown code blocks if present
+        raw_text = response.text.strip()
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:]
+        if raw_text.startswith("```"):
+            raw_text = raw_text[3:]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+            
+        result = json.loads(raw_text.strip())
+        action = result.get("action")
+
+        # Handle Budget Setting / Updating via Chat
+        if action == "set_budget":
+            budget_amount = float(result.get("budget_amount", 0))
+            
+            overall_budget = db.query(models.Budget).filter(
+                models.Budget.user_id == payload.user_id,
+                models.Budget.category == "_OVERALL_BUDGET_"
+            ).first()
+
+            if overall_budget:
+                overall_budget.limit_amount = budget_amount
+                msg = f"Your overall monthly budget has been successfully updated to ₹{budget_amount:,.2f}!"
+            else:
+                new_budget = models.Budget(
+                    user_id=payload.user_id,
+                    category="_OVERALL_BUDGET_",
+                    limit_amount=budget_amount
+                )
+                db.add(new_budget)
+                msg = f"Your overall monthly budget has been set to ₹{budget_amount:,.2f}!"
+            
+            db.commit()
+            return {"status": "success", "message": msg}
+
+        # Handle Standard Expense Logging
+        elif action == "log_expense":
+            amount = float(result.get("amount", 0))
+            description = result.get("description", "Unknown Expense")
+            category = result.get("category", "Uncategorized").title()
+
+            new_tx = models.Transaction(
+                user_id=payload.user_id,
+                amount=amount,
+                raw_description=description,
+                category=category,
+                date=datetime.now(timezone.utc).date()
+            )
+            db.add(new_tx)
+            db.commit()
+
+            return {
+                "status": "success", 
+                "message": f"Logged ₹{amount:,.2f} for '{description}' under {category}."
+            }
+
     except Exception as e:
-        return {"status": "error", "message": f"Failed to process expense: {str(e)}"}
-
-    ai_data = json.loads(response.text)
-    ai_category = ai_data["category"].strip().title()
-
-    # Check if category exists; if not, auto-create a budget limit of 0 so it appears in the UI
-    existing_budget = db.query(models.Budget).filter(
-        models.Budget.user_id == payload.user_id,
-        func.lower(models.Budget.category) == ai_category.lower()
-    ).first()
-
-    if not existing_budget:
-        new_budget = models.Budget(
-            user_id=payload.user_id, 
-            category=ai_category, 
-            limit_amount=0.0
-        )
-        db.add(new_budget)
-        db.commit()
-
-    reply_message = f"Logged ₹{ai_data['amount']} to {ai_category}."
-
-    if ai_data.get("is_recurring") and ai_data.get("frequency_days", 0) > 0:
-        next_due = datetime.now(timezone.utc).date() + timedelta(days=ai_data["frequency_days"])
-        new_sub = models.Subscription(
-            user_id=payload.user_id,
-            description=ai_data["description"],
-            amount=ai_data["amount"],
-            frequency_days=ai_data["frequency_days"],
-            next_due_date=next_due
-        )
-        db.add(new_sub)
-        reply_message = f"Added recurring {ai_data['description']} for ₹{ai_data['amount']} every {ai_data['frequency_days']} days."
-
-    new_tx = models.Transaction(
-        user_id=payload.user_id,
-        raw_description=ai_data["description"],
-        amount=ai_data["amount"],
-        category=ai_category,
-        date=datetime.now(timezone.utc).date(),
-        is_recurring=ai_data.get("is_recurring", False)
-    )
-    db.add(new_tx)
-    db.commit()
-
-    return {"status": "success", "message": reply_message}
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/user/budget")
 def create_budget(payload: BudgetCreate, db: Session = Depends(get_db)):
+    target_category = "_OVERALL_BUDGET_" if payload.category == "__OVERALL__" else payload.category.title()
+    
     existing = db.query(models.Budget).filter(
         models.Budget.user_id == payload.user_id, 
-        func.lower(models.Budget.category) == payload.category.lower()
+        func.lower(models.Budget.category) == target_category.lower()
     ).first()
     
     if existing:
@@ -266,7 +284,30 @@ def create_budget(payload: BudgetCreate, db: Session = Depends(get_db)):
     else:
         new_b = models.Budget(
             user_id=payload.user_id, 
-            category=payload.category.title(), 
+            category=target_category, 
+            limit_amount=payload.limit_amount
+        )
+        db.add(new_b)
+        
+    db.commit()
+    return {"status": "success"}
+
+@app.post("/user/budget")
+def create_budget(payload: BudgetCreate, db: Session = Depends(get_db)):
+    
+    target_category = "_OVERALL_BUDGET_" if payload.category == "__OVERALL__" else payload.category.title()
+    
+    existing = db.query(models.Budget).filter(
+        models.Budget.user_id == payload.user_id, 
+        func.lower(models.Budget.category) == target_category.lower()
+    ).first()
+    
+    if existing:
+        existing.limit_amount = payload.limit_amount
+    else:
+        new_b = models.Budget(
+            user_id=payload.user_id, 
+            category=target_category, 
             limit_amount=payload.limit_amount
         )
         db.add(new_b)
@@ -276,12 +317,24 @@ def create_budget(payload: BudgetCreate, db: Session = Depends(get_db)):
 
 @app.get("/user/budgets/{user_id}")
 def get_user_budgets(user_id: int, db: Session = Depends(get_db)):
-    budgets = db.query(models.Budget).filter(models.Budget.user_id == user_id).all()
-    today = datetime.now(timezone.utc).date()
     
+    budgets = db.query(models.Budget).filter(
+        models.Budget.user_id == user_id,
+        models.Budget.category != "_OVERALL_BUDGET_",
+        models.Budget.category != "__Overall__"
+    ).all()
+
+    overall_budget_obj = db.query(models.Budget).filter(
+        models.Budget.user_id == user_id,
+        models.Budget.category == "_OVERALL_BUDGET_"
+    ).first()
+    
+    overall_limit = overall_budget_obj.limit_amount if overall_budget_obj else 0.0
+
+    today = datetime.now(timezone.utc).date()
     months_data = []
     
-    # Generate exactly 5 months of history
+    
     for i in range(5):
         m = today.month - i
         y = today.year
@@ -297,6 +350,8 @@ def get_user_budgets(user_id: int, db: Session = Depends(get_db)):
         month_label = start_date.strftime("%B %Y")
         
         cat_data = []
+        month_total_spent = 0.0
+
         for b in budgets:
             txs = db.query(models.Transaction).filter(
                 models.Transaction.user_id == user_id,
@@ -306,6 +361,7 @@ def get_user_budgets(user_id: int, db: Session = Depends(get_db)):
             ).order_by(models.Transaction.date.desc()).all()
             
             spent = sum(t.amount for t in txs)
+            month_total_spent += spent
             
             cat_data.append({
                 "id": b.id,
@@ -326,6 +382,8 @@ def get_user_budgets(user_id: int, db: Session = Depends(get_db)):
         months_data.append({
             "month_label": month_label,
             "month_offset": i,
+            "overall_limit": overall_limit,
+            "overall_spent": month_total_spent,
             "categories": cat_data
         })
 
@@ -365,6 +423,48 @@ def get_user_dashboard(user_id: int, db: Session = Depends(get_db)):
             for t in transactions
         ]
     }
+
+@app.get("/user/ai-advice/{user_id}")
+def get_ai_financial_advice(user_id: int, db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    today = datetime.now(timezone.utc).date()
+    start_of_month = today.replace(day=1)
+
+    txs = db.query(models.Transaction).filter(
+        models.Transaction.user_id == user_id,
+        models.Transaction.date >= start_of_month
+    ).all()
+
+    total_spent = sum(t.amount for t in txs)
+    
+    category_breakdown = {}
+    for t in txs:
+        category_breakdown[t.category] = category_breakdown.get(t.category, 0) + t.amount
+
+    prompt = f"""
+    You are WealthWise AI, a friendly and sharp personal finance advisor.
+    User's Monthly Income: ₹{user.monthly_income}
+    Total Spent This Month: ₹{total_spent}
+    Spending Breakdown by Category: {json.dumps(category_breakdown)}
+
+    Provide a short, direct, and encouraging financial advice report (max 3 sentences). 
+    Highlight if any category is taking up too much of their income and give a specific tip to help them save.
+    """
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=0.7),
+        )
+        advice = response.text
+    except Exception as e:
+        advice = "Keep tracking your expenses consistently to unlock deeper monthly insights!"
+
+    return {"status": "success", "advice": advice}
 
 @app.get("/user/notifications/{user_id}")
 def get_notifications(user_id: int, db: Session = Depends(get_db)):

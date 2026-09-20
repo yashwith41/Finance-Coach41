@@ -3,6 +3,8 @@ import { Bell, Send, Eye, EyeOff, ChevronLeft, ChevronRight, ChevronDown, Chevro
 
 export default function App() {
   const [currentView, setCurrentView] = useState('landing');
+  const [aiAdvice, setAiAdvice] = useState('');
+  const [loadingAdvice, setLoadingAdvice] = useState(false);
   const [activeTab, setActiveTab] = useState('chat');
   const [chatInput, setChatInput] = useState('');
   const [messages, setMessages] = useState([
@@ -30,6 +32,7 @@ export default function App() {
   const [monthsData, setMonthsData] = useState([]);
   const [currentMonthOffset, setCurrentMonthOffset] = useState(0);
   const [newBudget, setNewBudget] = useState({ category: '', limit: '' });
+  const [overallLimitInput, setOverallLimitInput] = useState('');
   const [expandedCategory, setExpandedCategory] = useState(null);
 
   const fetchNotifications = async (userId) => {
@@ -50,6 +53,20 @@ export default function App() {
       if (res.ok) setMonthsData(data.months || []);
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  const fetchAiAdvice = async () => {
+    if (!user?.id) return;
+    setLoadingAdvice(true);
+    try {
+      const res = await fetch(`http://localhost:8000/user/ai-advice/${user.id}`);
+      const data = await res.json();
+      if (res.ok) setAiAdvice(data.advice);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingAdvice(false);
     }
   };
 
@@ -156,6 +173,27 @@ export default function App() {
     }
   };
 
+  const handleOverallBudgetSubmit = async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('http://localhost:8000/user/budget', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: user.id,
+          category: '__OVERALL__',
+          limit_amount: parseFloat(overallLimitInput)
+        })
+      });
+      if (res.ok) {
+        setOverallLimitInput('');
+        fetchBudgets(user.id);
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('wealthwise_token');
     setUser(null);
@@ -168,6 +206,11 @@ export default function App() {
     setMessages(prev => [...prev, { role: 'user', text: userText }]);
     setChatInput('');
 
+    if (userText.toLowerCase().includes("no expenses today")) {
+      setMessages(prev => [...prev, { role: 'ai', text: "Zero expenditure recorded for today. Excellent financial discipline—your capital remains fully preserved." }]);
+      return;
+    }
+
     try {
       const response = await fetch('http://localhost:8000/chat/log', {
         method: 'POST',
@@ -178,8 +221,14 @@ export default function App() {
         })
       });
       const data = await response.json();
-      setMessages(prev => [...prev, { role: 'ai', text: data.message }]);
       
+      // Catch backend errors and display them in chat
+      if (!response.ok) {
+        setMessages(prev => [...prev, { role: 'ai', text: `Error: ${data.detail || 'Failed to process request.'}` }]);
+        return;
+      }
+
+      setMessages(prev => [...prev, { role: 'ai', text: data.message }]);
       fetchDashboardData(user.id);
     } catch (error) {
       setMessages(prev => [...prev, { role: 'ai', text: 'Server error. Make sure FastAPI is running.' }]);
@@ -320,6 +369,25 @@ export default function App() {
               </div>
             </div>
 
+            <div className="p-8 rounded-2xl bg-zinc-900/40 border border-zinc-800/60 space-y-4">
+              <div className="flex justify-between items-center">
+                <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">AI Financial Insights</h3>
+                <button 
+                  onClick={fetchAiAdvice}
+                  disabled={loadingAdvice}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-xl text-xs font-medium hover:bg-blue-500 transition disabled:opacity-50"
+                >
+                  {loadingAdvice ? 'Analyzing...' : 'Generate Monthly Report ✨'}
+                </button>
+              </div>
+
+              {aiAdvice && (
+                <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-200 text-sm leading-relaxed">
+                  {aiAdvice}
+                </div>
+              )}
+            </div>
+
             <div className="p-8 rounded-2xl bg-zinc-900/40 border border-zinc-800/60">
               <h3 className="text-xs font-medium text-zinc-400 mb-6 uppercase tracking-wider">Current Month Spending</h3>
               <div className="grid grid-cols-5 text-xs font-semibold text-zinc-500 uppercase pb-4 border-b border-zinc-800">
@@ -392,7 +460,7 @@ export default function App() {
 
             <div className="p-5 border-t border-zinc-800/60 bg-zinc-900/40 rounded-b-2xl space-y-4">
               <div className="flex space-x-2 overflow-x-auto pb-1 scrollbar-hide">
-                <button onClick={() => setChatInput("Set a savings goal for this month")} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-full transition whitespace-nowrap border border-zinc-700/50">Set a savings goal</button>
+                <button onClick={() => setChatInput("Set my monthly budget to ")} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-full transition whitespace-nowrap border border-zinc-700/50">Set monthly budget 🎯</button>
                 <button onClick={() => setChatInput("No expenses today! 🎉")} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-full transition whitespace-nowrap border border-zinc-700/50">No expenses today! 🎉</button>
               </div>
               <form className="relative flex items-center" onSubmit={(e) => { e.preventDefault(); handleSend(); }}>
@@ -403,24 +471,65 @@ export default function App() {
           </div>
         )}
 
-        {/* --- BUDGETS & HISTORY TAB --- */}
+        
         {activeTab === 'categories' && (
           <div className="space-y-6 animate-in fade-in duration-300">
-            <h2 className="text-xl font-medium text-white">Monthly Budgets</h2>
+            <h2 className="text-xl font-medium text-white">Budgets & Limits</h2>
             
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               
-              {/* Left Column: Form to create limit */}
-              <div className="p-6 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl h-fit md:col-span-1">
-                <h3 className="text-sm font-medium text-white mb-4">Set Category Limit</h3>
-                <form onSubmit={handleBudgetSubmit} className="space-y-4">
-                  <input type="text" required placeholder="Category Name (e.g., Groceries)" value={newBudget.category} onChange={e => setNewBudget({...newBudget, category: e.target.value})} className="w-full bg-[#0a0a0a] border border-zinc-700 text-sm rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500" />
-                  <input type="number" required placeholder="Monthly Limit (₹)" value={newBudget.limit} onChange={e => setNewBudget({...newBudget, limit: e.target.value})} className="w-full bg-[#0a0a0a] border border-zinc-700 text-sm rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500" />
-                  <button type="submit" className="w-full py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition">Save Budget</button>
-                </form>
+              
+              <div className="space-y-6 md:col-span-1">
+                
+                
+                <div className="p-6 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl">
+                  <h3 className="text-sm font-medium text-white mb-2">Total Monthly Budget</h3>
+                  <p className="text-xs text-zinc-500 mb-4">Set a spending cap for the entire month.</p>
+                  <form onSubmit={handleOverallBudgetSubmit} className="space-y-4">
+                    <input 
+                      type="number" 
+                      required 
+                      placeholder="Total Limit (₹)" 
+                      value={overallLimitInput} 
+                      onChange={e => setOverallLimitInput(e.target.value)} 
+                      className="w-full bg-[#0a0a0a] border border-zinc-700 text-sm rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500" 
+                    />
+                    <button type="submit" className="w-full py-2.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-500 transition">
+                      Save Total Budget
+                    </button>
+                  </form>
+                </div>
+
+                
+                <div className="p-6 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl">
+                  <h3 className="text-sm font-medium text-white mb-2">Set Category Limit</h3>
+                  <p className="text-xs text-zinc-500 mb-4">Restrict spending for a specific category.</p>
+                  <form onSubmit={handleBudgetSubmit} className="space-y-4">
+                    <input 
+                      type="text" 
+                      required 
+                      placeholder="Category Name (e.g., Food)" 
+                      value={newBudget.category} 
+                      onChange={e => setNewBudget({...newBudget, category: e.target.value})} 
+                      className="w-full bg-[#0a0a0a] border border-zinc-700 text-sm rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500" 
+                    />
+                    <input 
+                      type="number" 
+                      required 
+                      placeholder="Monthly Limit (₹)" 
+                      value={newBudget.limit} 
+                      onChange={e => setNewBudget({...newBudget, limit: e.target.value})} 
+                      className="w-full bg-[#0a0a0a] border border-zinc-700 text-sm rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500" 
+                    />
+                    <button type="submit" className="w-full py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-500 transition">
+                      Save Category Limit
+                    </button>
+                  </form>
+                </div>
+
               </div>
 
-              {/* Right Column: Month Slider & Categories */}
+              
               <div className="space-y-4 md:col-span-2">
                 
                 {/* 5-Month UI Slider */}
@@ -454,67 +563,87 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Categories List for Selected Month */}
-                {(!currentMonthData || currentMonthData.categories.length === 0) ? (
-                    <div className="p-6 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl text-center text-zinc-500 text-sm">
-                      No categories set. Add limits or chat with WealthWise to auto-generate them.
+                
+                {currentMonthData && (
+                  <div className="p-5 bg-gradient-to-r from-blue-950/30 to-zinc-900/60 border border-blue-500/30 rounded-2xl space-y-3">
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="font-semibold text-white">Overall Monthly Spending</span>
+                      <span className="text-zinc-300">
+                        ₹₹{currentMonthData.overall_spent.toLocaleString()} {currentMonthData.overall_limit > 0 ? `/ ₹${currentMonthData.overall_limit.toLocaleString()}` : '(No limit set)'}
+                      </span>
                     </div>
+                    {currentMonthData.overall_limit > 0 && (
+                      <div className="w-full bg-[#0a0a0a] rounded-full h-2 border border-zinc-800">
+                        <div 
+                          className={`h-2 rounded-full transition-all duration-300 ${currentMonthData.overall_spent >= currentMonthData.overall_limit ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 'bg-emerald-500'}`} 
+                          style={{ width: `${Math.min((currentMonthData.overall_spent / currentMonthData.overall_limit) * 100, 100)}%` }}
+                        ></div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                
+                {(!currentMonthData || !currentMonthData.categories || currentMonthData.categories.length === 0) ? (
+                  <div className="p-6 bg-zinc-900/40 border border-zinc-800/60 rounded-2xl text-center text-zinc-500 text-sm">
+                    No category limits set for this month.
+                  </div>
                 ) : (
-                    currentMonthData.categories.map(b => {
-                        const isLimitZero = b.limit_amount === 0;
-                        const percent = isLimitZero ? (b.spent > 0 ? 100 : 0) : Math.min((b.spent / b.limit_amount) * 100, 100);
-                        const isOver = isLimitZero ? false : percent >= 90;
-                        const isExpanded = expandedCategory === b.id;
+                  currentMonthData.categories.map(b => {
+                    const isLimitZero = b.limit_amount === 0;
+                    const percent = isLimitZero ? (b.spent > 0 ? 100 : 0) : Math.min((b.spent / b.limit_amount) * 100, 100);
+                    const isOver = isLimitZero ? false : percent >= 90;
+                    const isExpanded = expandedCategory === b.id;
 
-                        return (
-                          <div key={b.id} className="bg-zinc-900/40 border border-zinc-800/60 rounded-2xl overflow-hidden transition-all duration-200">
-                            
-                            {/* Category Header (Clickable for Dropdown) */}
-                            <div 
-                              onClick={() => toggleCategoryExpand(b.id)}
-                              className="p-5 cursor-pointer hover:bg-zinc-800/30 transition flex flex-col space-y-3"
-                            >
-                              <div className="flex justify-between items-center text-sm">
-                                <div className="flex items-center space-x-2">
-                                  <span className="font-medium text-zinc-200 text-base">{b.category}</span>
-                                  {isLimitZero && <span className="text-[10px] bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full uppercase tracking-widest">Auto</span>}
-                                </div>
-                                <div className="flex items-center space-x-4">
-                                  <span className="text-zinc-400">
-                                    ₹{b.spent.toLocaleString()} {isLimitZero ? "" : `/ ₹${b.limit_amount.toLocaleString()}`}
-                                  </span>
-                                  {isExpanded ? <ChevronUp size={16} className="text-zinc-500" /> : <ChevronDown size={16} className="text-zinc-500" />}
-                                </div>
-                              </div>
-                              
-                              {!isLimitZero && (
-                                <div className="w-full bg-[#0a0a0a] rounded-full h-1.5 border border-zinc-800">
-                                  <div className={`h-1.5 rounded-full ${isOver ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
-                                </div>
-                              )}
+                    return (
+                      <div key={b.id} className="bg-zinc-900/40 border border-zinc-800/60 rounded-2xl overflow-hidden transition-all duration-200">
+                        
+                        
+                        <div 
+                          onClick={() => toggleCategoryExpand(b.id)}
+                          className="p-5 cursor-pointer hover:bg-zinc-800/30 transition flex flex-col space-y-3"
+                        >
+                          <div className="flex justify-between items-center text-sm">
+                            <div className="flex items-center space-x-2">
+                              <span className="font-medium text-zinc-200 text-base">{b.category}</span>
+                              {isLimitZero && <span className="text-[10px] bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full uppercase tracking-widest">Auto</span>}
                             </div>
+                            <div className="flex items-center space-x-4">
+                              <span className="text-zinc-400">
+                                ₹{b.spent.toLocaleString()} {isLimitZero ? "" : `/ ₹${b.limit_amount.toLocaleString()}`}
+                              </span>
+                              {isExpanded ? <ChevronUp size={16} className="text-zinc-500" /> : <ChevronDown size={16} className="text-zinc-500" />}
+                            </div>
+                          </div>
+                          
+                          {!isLimitZero && (
+                            <div className="w-full bg-[#0a0a0a] rounded-full h-1.5 border border-zinc-800">
+                              <div className={`h-1.5 rounded-full ${isOver ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.5)]' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
+                            </div>
+                          )}
+                        </div>
 
-                            {/* Dropdown: Transaction Items */}
-                            {isExpanded && (
-                              <div className="px-5 pb-5 pt-2 bg-zinc-900/20 border-t border-zinc-800/40">
-                                {b.transactions.length === 0 ? (
-                                  <p className="text-xs text-zinc-500 italic py-2">No transactions recorded for {b.category} this month.</p>
-                                ) : (
-                                  <div className="space-y-2">
-                                    {b.transactions.map(item => (
-                                      <div key={item.id} className="flex justify-between text-xs py-1.5 text-zinc-300 border-b border-zinc-800/50 last:border-0">
-                                        <span><span className="text-zinc-500 mr-2">{item.date}</span> {item.description}</span>
-                                        <span className="font-medium text-zinc-200">₹{item.amount.toLocaleString()}</span>
-                                      </div>
-                                    ))}
+                        
+                        {isExpanded && (
+                          <div className="px-5 pb-5 pt-2 bg-zinc-900/20 border-t border-zinc-800/40">
+                            {b.transactions.length === 0 ? (
+                              <p className="text-xs text-zinc-500 italic py-2">No transactions recorded for {b.category} this month.</p>
+                            ) : (
+                              <div className="space-y-2">
+                                {b.transactions.map(item => (
+                                  <div key={item.id} className="flex justify-between text-xs py-1.5 text-zinc-300 border-b border-zinc-800/50 last:border-0">
+                                    <span><span className="text-zinc-500 mr-2">{item.date}</span> {item.description}</span>
+                                    <span className="font-medium text-zinc-200">₹{item.amount.toLocaleString()}</span>
                                   </div>
-                                )}
+                                ))}
                               </div>
                             )}
-
                           </div>
-                        )
-                    })
+                        )}
+
+                      </div>
+                    );
+                  })
                 )}
               </div>
 
